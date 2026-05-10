@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.pugs.syncagent.scanner</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__NODE_BIN__</string>
+    <string>__AGENT_ROOT__/src/scan.js</string>
+  </array>
+
+  <!-- Run every 300 seconds (5 minutes) -->
+  <key>StartInterval</key>
+  <integer>300</integer>
+
+  <!-- Run once at load so we don't wait 5 min for the first scrape -->
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>StandardOutPath</key>
+  <string>__AGENT_ROOT__/scanner.log</string>
+  <key>StandardErrorPath</key>
+  <string>__AGENT_ROOT__/scanner.error.log</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+  </dict>
+</dict>
+</plist>

@@ -1,0 +1,20 @@
+{
+  "name": "pugs-sync-agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local Mac agent that scrapes iMessage and bridges to the Pugs Sales cloud app.",
+  "main": "src/scan.js",
+  "scripts": {
+    "scan": "node src/scan.js",
+    "send-listener": "node src/send.js",
+    "install-agent": "bash install.sh"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.3.0",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
