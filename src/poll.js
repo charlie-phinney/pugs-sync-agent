@@ -1,0 +1,123 @@
+/**
+ * Pugs Sync Agent — Outbound Queue Poller
+ *
+ * Long-running process: every POLL_INTERVAL_MS, GETs the pugs-sales
+ * outbound queue at /api/sync/outbound-queue, dispatches each due item
+ * to the LOCAL sender (src/send.js → AppleScript), then POSTs back to
+ * /api/sync/outbound-queue/[id] with the outcome.
+ *
+ * Why this exists: pugs-sales runs on Vercel and cannot reach Connor's
+ * Mac directly (NAT). The agent polls outward — same pattern as the
+ * inbound scanner. iMessage-only (no SMS fallback) per v1 decision.
+ *
+ * Run via launchd: com.pugs.syncagent.poller.plist (RunAtLoad + KeepAlive).
+ *
+ * Env (in .env at the agent root):
+ *   PUGS_SYNC_WEBHOOK_URL   → e.g. https://pugs-sales.vercel.app/api/import/imessage
+ *                             (we derive the /api/sync base from this — same host)
+ *   PUGS_SYNC_SECRET        → shared secret, sent as x-pugs-sync-secret
+ *   SENDER_PORT             → defaults to 7890 (matches src/send.js)
+ *   POLL_INTERVAL_MS        → defaults to 5000
+ *   MAX_ATTEMPTS            → defaults to 5; rows with attempts >= MAX are skipped
+ */
+
+const path = require('path')
+require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
+
+const WEBHOOK_URL      = process.env.PUGS_SYNC_WEBHOOK_URL
+const SECRET           = process.env.PUGS_SYNC_SECRET
+const SENDER_PORT      = parseInt(process.env.SENDER_PORT      || '7890', 10)
+const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '5000', 10)
+const MAX_ATTEMPTS     = parseInt(process.env.MAX_ATTEMPTS     || '5',    10)
+
+if (!WEBHOOK_URL || !SECRET) {
+  console.error('Missing PUGS_SYNC_WEBHOOK_URL or PUGS_SYNC_SECRET in .env')
+  process.exit(2)
+}
+
+// Derive the cloud-app API origin from the inbound webhook URL — same host.
+// e.g. https://pugs-sales.vercel.app/api/import/imessage → https://pugs-sales.vercel.app
+const API_BASE = new URL(WEBHOOK_URL).origin
+
+function log(...args) {
+  console.log(new Date().toISOString(), ...args)
+}
+
+async function fetchPendingBatch() {
+  const res = await fetch(`${API_BASE}/api/sync/outbound-queue?limit=10`, {
+    headers: { 'x-pugs-sync-secret': SECRET },
+  })
+  if (!res.ok) {
+    throw new Error(`queue GET ${res.status}: ${(await res.text()).slice(0, 300)}`)
+  }
+  const j = await res.json()
+  return Array.isArray(j.items) ? j.items : []
+}
+
+async function reportOutcome(id, payload) {
+  const res = await fetch(`${API_BASE}/api/sync/outbound-queue/${id}`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', 'x-pugs-sync-secret': SECRET },
+    body:    JSON.stringify(payload),
+  })
+  if (!res.ok) {
+    log(`report-outcome ${id} failed: ${res.status} ${(await res.text()).slice(0, 200)}`)
+  }
+}
+
+async function dispatchToLocalSender(item) {
+  // item: { id, to_handle, body, attempts }
+  const res = await fetch(`http://127.0.0.1:${SENDER_PORT}/send`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json', 'x-pugs-sync-secret': SECRET },
+    body:    JSON.stringify({ to: item.to_handle, text: item.body, service: 'iMessage' }),
+  })
+  if (!res.ok) {
+    const errText = await res.text()
+    throw new Error(`local send ${res.status}: ${errText.slice(0, 400)}`)
+  }
+  return res.json()
+}
+
+async function pollOnce() {
+  let items
+  try {
+    items = await fetchPendingBatch()
+  } catch (e) {
+    log('poll fetch error:', e.message || e)
+    return
+  }
+  if (items.length === 0) return
+
+  log(`processing ${items.length} pending iMessage(s)`)
+
+  for (const item of items) {
+    if (item.attempts >= MAX_ATTEMPTS) {
+      log(`skip ${item.id}: attempts=${item.attempts} >= MAX_ATTEMPTS=${MAX_ATTEMPTS}`)
+      continue
+    }
+    try {
+      await dispatchToLocalSender(item)
+      await reportOutcome(item.id, { status: 'sent' })
+      log(`sent ${item.id} → ${item.to_handle}`)
+    } catch (e) {
+      const msg = e?.message || String(e)
+      log(`failed ${item.id}: ${msg}`)
+      await reportOutcome(item.id, { status: 'failed', error: msg })
+    }
+  }
+}
+
+async function loop() {
+  // First tick immediately, then on interval.
+  for (;;) {
+    await pollOnce()
+    await new Promise(r => setTimeout(r, POLL_INTERVAL_MS))
+  }
+}
+
+log(`pugs-sync poller starting · base=${API_BASE} · interval=${POLL_INTERVAL_MS}ms`)
+loop().catch(e => {
+  log('fatal loop error:', e)
+  process.exit(1)
+})

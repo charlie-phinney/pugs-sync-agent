@@ -5,7 +5,7 @@
 set -e
 LAUNCH_DIR="$HOME/Library/LaunchAgents"
 
-for kind in scanner sender; do
+for kind in scanner sender poller updater; do
   dst="$LAUNCH_DIR/com.pugs.syncagent.$kind.plist"
   if [ -f "$dst" ]; then
     launchctl unload "$dst" 2>/dev/null || true

@@ -33,7 +33,7 @@ echo "→ Writing launchd plists with paths substituted..."
 LAUNCH_DIR="$HOME/Library/LaunchAgents"
 mkdir -p "$LAUNCH_DIR"
 
-for kind in scanner sender; do
+for kind in scanner sender poller updater; do
   src="$AGENT_ROOT/launchd/com.pugs.syncagent.$kind.plist"
   dst="$LAUNCH_DIR/com.pugs.syncagent.$kind.plist"
   sed -e "s|__NODE_BIN__|$NODE_BIN|g" -e "s|__AGENT_ROOT__|$AGENT_ROOT|g" "$src" > "$dst"
@@ -63,10 +63,14 @@ Then reload the scanner so it can read chat.db with the new permission:
     launchctl load   "$LAUNCH_DIR/com.pugs.syncagent.scanner.plist"
 
 Logs live in:
-  $AGENT_ROOT/scanner.log
+  $AGENT_ROOT/scanner.log      (inbound chat.db → cloud)
   $AGENT_ROOT/scanner.error.log
-  $AGENT_ROOT/sender.log
+  $AGENT_ROOT/sender.log       (localhost:7890 → Messages.app)
   $AGENT_ROOT/sender.error.log
+  $AGENT_ROOT/poller.log       (cloud outbound queue → local sender)
+  $AGENT_ROOT/poller.error.log
+  $AGENT_ROOT/updater.log      (self-updater: git pull + reload services)
+  $AGENT_ROOT/updater.error.log
 
 To run a one-off scan right now to verify:
     node "$AGENT_ROOT/src/scan.js"

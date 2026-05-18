@@ -4,3 +4,6 @@ state.json
 *.log
 .DS_Store
 chat.db.copy
+
+# Secrets — must never leave Charlie's local machine
+SECRETS_TO_HAND_OFF.txt
