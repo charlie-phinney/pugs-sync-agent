@@ -24,7 +24,8 @@ const CHAT_DB     = process.env.CHAT_DB_PATH || path.join(os.homedir(), 'Library
 const STATE_PATH  = path.join(__dirname, '..', 'state.json')
 const BATCH_SIZE  = 200
 const INITIAL_BACKFILL_DAYS = parseInt(process.env.INITIAL_BACKFILL_DAYS || '90', 10)
-const CONTACTS_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000  // once per day
+const CONTACTS_SYNC_INTERVAL_MS = 60 * 60 * 1000  // once per hour (was 24h —
+// dropped while we get visibility into whether the sync is firing at all)
 
 if (!WEBHOOK_URL || !SECRET) {
   console.error('Missing PUGS_SYNC_WEBHOOK_URL or PUGS_SYNC_SECRET in .env')
@@ -192,9 +193,12 @@ async function main() {
     try {
       const res = await syncContacts({ webhookBase, secret: SECRET })
       console.log('Contacts sync:', JSON.stringify(res))
-      saveState({ ...latestState, last_contacts_at: new Date().toISOString() })
+      // Only advance the cadence on actual success — keep retrying if the
+      // post failed or the AddressBook wasn't readable.
+      if (res?.ok) {
+        saveState({ ...latestState, last_contacts_at: new Date().toISOString() })
+      }
     } catch (e) {
-      // Non-fatal — chat.db sync already succeeded, contact sync can retry tomorrow.
       console.error('Contacts sync failed (non-fatal):', e.message || e)
     }
   }

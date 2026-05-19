@@ -104,7 +104,20 @@ function extractFromDb(dbPath) {
 async function syncContacts({ webhookBase, secret }) {
   const books = findAddressBooks()
   if (!books.length) {
-    return { ok: true, skipped: 'no_address_books_found' }
+    // Still POST an empty payload so the server-side heartbeat records
+    // "agent is alive, found no AddressBook sources at the expected path"
+    // — otherwise we have zero visibility on whether the agent ran at all.
+    try {
+      const resp = await fetch(`${webhookBase}/api/sync/contacts`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json', 'x-pugs-sync-secret': secret },
+        body: JSON.stringify({ phones: [], emails: [], agent_note: 'no_address_books_found' }),
+      })
+      const text = await resp.text()
+      return { ok: resp.ok, skipped: 'no_address_books_found', server_status: resp.status, server: text.slice(0, 200) }
+    } catch (e) {
+      return { ok: false, skipped: 'no_address_books_found_and_post_failed', error: e?.message || String(e) }
+    }
   }
 
   const phoneMap = new Map()
