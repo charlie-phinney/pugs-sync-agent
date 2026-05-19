@@ -15,6 +15,7 @@ const fs   = require('fs')
 const os   = require('os')
 const path = require('path')
 const Database = require('better-sqlite3')
+const { syncContacts } = require('./contacts')
 require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
 
 const WEBHOOK_URL = process.env.PUGS_SYNC_WEBHOOK_URL
@@ -23,6 +24,7 @@ const CHAT_DB     = process.env.CHAT_DB_PATH || path.join(os.homedir(), 'Library
 const STATE_PATH  = path.join(__dirname, '..', 'state.json')
 const BATCH_SIZE  = 200
 const INITIAL_BACKFILL_DAYS = parseInt(process.env.INITIAL_BACKFILL_DAYS || '90', 10)
+const CONTACTS_SYNC_INTERVAL_MS = 24 * 60 * 60 * 1000  // once per day
 
 if (!WEBHOOK_URL || !SECRET) {
   console.error('Missing PUGS_SYNC_WEBHOOK_URL or PUGS_SYNC_SECRET in .env')
@@ -177,6 +179,24 @@ async function main() {
   } finally {
     if (db) db.close()
     try { fs.unlinkSync(snapshotPath) } catch {}
+  }
+
+  // Daily contacts enrichment — POST (name, phone) and (name, email) pairs
+  // from macOS AddressBook so phone-only drafts in pugs-sales get their
+  // real names. Server is enrichment-only: never creates new people rows
+  // from this payload.
+  const latestState = loadState()
+  const lastContactsAt = latestState.last_contacts_at ? new Date(latestState.last_contacts_at).getTime() : 0
+  if (Date.now() - lastContactsAt > CONTACTS_SYNC_INTERVAL_MS) {
+    const webhookBase = WEBHOOK_URL.replace(/\/api\/.*$/, '')
+    try {
+      const res = await syncContacts({ webhookBase, secret: SECRET })
+      console.log('Contacts sync:', JSON.stringify(res))
+      saveState({ ...latestState, last_contacts_at: new Date().toISOString() })
+    } catch (e) {
+      // Non-fatal — chat.db sync already succeeded, contact sync can retry tomorrow.
+      console.error('Contacts sync failed (non-fatal):', e.message || e)
+    }
   }
 }
 
