@@ -95,7 +95,24 @@ async function main() {
       console.log(`First run: starting from ROWID ${cutoffRowid} (${INITIAL_BACKFILL_DAYS}d back)`)
     }
 
+    // 1:1 conversations only. We filter group chats at the source because
+    // pugs-sales is Connor's sales CRM — group chats (with friends, family,
+    // teammates) are noise that should never reach the platform.
+    //
+    // Definition of 1:1: the chat this message belongs to has exactly one
+    // external participant (chat_handle_join row count = 1). Group chats
+    // have 2+ external participants. The user's own identity isn't in the
+    // handle table, so 1:1 is genuinely "Connor + one other person."
+    //
+    // We use a CTE-style subquery so the participant-count check happens
+    // once per chat rather than once per row.
     const rows = db.prepare(`
+      WITH one_to_one_chats AS (
+        SELECT chat_id
+        FROM chat_handle_join
+        GROUP BY chat_id
+        HAVING COUNT(*) = 1
+      )
       SELECT
         m.ROWID       AS rowid,
         m.guid        AS guid,
@@ -106,6 +123,8 @@ async function main() {
         h.id          AS handle
       FROM message m
       LEFT JOIN handle h ON m.handle_id = h.ROWID
+      JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
+      JOIN one_to_one_chats o2o ON o2o.chat_id = cmj.chat_id
       WHERE m.ROWID > ?
         AND m.text IS NOT NULL
         AND m.text != ''
