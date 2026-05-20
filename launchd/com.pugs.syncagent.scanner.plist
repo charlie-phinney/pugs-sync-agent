@@ -19,6 +19,19 @@
   <key>RunAtLoad</key>
   <true/>
 
+  <!-- Auto-restart on bad exits (not on clean exit-0, which is normal).
+       Pair with ThrottleInterval to avoid rapid-restart loops if the job
+       is genuinely broken. -->
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+
   <key>StandardOutPath</key>
   <string>__AGENT_ROOT__/scanner.log</string>
   <key>StandardErrorPath</key>
