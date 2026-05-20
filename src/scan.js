@@ -79,6 +79,7 @@ async function main() {
 
   const state = loadState()
   let cutoffRowid = state.last_rowid || 0
+  let newDraftsThisRun = 0  // populated from /api/import/imessage response, used to trigger contacts sync
 
   // On very first run, derive a cutoff from INITIAL_BACKFILL_DAYS to avoid
   // dumping years of history in one request.
@@ -184,6 +185,11 @@ async function main() {
     }
     console.log(`Webhook OK: ${text.slice(0, 200)}`)
 
+    // Parse new_drafts_created from response so we can immediately enrich
+    // names below. If parsing fails, fall back to hourly cadence — the
+    // server-side response shape might evolve.
+    try { newDraftsThisRun = (JSON.parse(text) || {}).new_drafts_created || 0 } catch {}
+
     // Only advance state if the POST succeeded
     const lastRowid = rows[rows.length - 1].rowid
     saveState({ ...state, last_rowid: lastRowid, last_run_at: new Date().toISOString() })
@@ -193,13 +199,24 @@ async function main() {
     try { fs.unlinkSync(snapshotPath) } catch {}
   }
 
-  // Daily contacts enrichment — POST (name, phone) and (name, email) pairs
-  // from macOS AddressBook so phone-only drafts in pugs-sales get their
-  // real names. Server is enrichment-only: never creates new people rows
-  // from this payload.
+  // Contacts enrichment — POST (name, phone) and (name, email) pairs from
+  // macOS AddressBook so nameless drafts in pugs-sales get their real names.
+  // Server is enrichment-only: never creates new people rows from this payload.
+  //
+  // Trigger logic:
+  //   - If this scan created any new drafts on the server, sync NOW (subject
+  //     to a 60s minimum throttle to avoid burst hammering on backlog catchup).
+  //   - Otherwise fall back to the hourly cadence (handles renames in Connor's
+  //     address book even when no new leads arrive).
   const latestState = loadState()
   const lastContactsAt = latestState.last_contacts_at ? new Date(latestState.last_contacts_at).getTime() : 0
-  if (Date.now() - lastContactsAt > CONTACTS_SYNC_INTERVAL_MS) {
+  const sinceLastSync = Date.now() - lastContactsAt
+  const NEW_DRAFT_MIN_THROTTLE_MS = 60 * 1000  // 60s
+  const shouldRunForNewDrafts = newDraftsThisRun > 0 && sinceLastSync > NEW_DRAFT_MIN_THROTTLE_MS
+  const shouldRunForFallback = sinceLastSync > CONTACTS_SYNC_INTERVAL_MS
+  if (shouldRunForNewDrafts || shouldRunForFallback) {
+    const trigger = shouldRunForNewDrafts ? `${newDraftsThisRun} new draft(s)` : 'hourly fallback'
+    console.log(`Contacts sync trigger: ${trigger}`)
     const webhookBase = WEBHOOK_URL.replace(/\/api\/.*$/, '')
     try {
       const res = await syncContacts({ webhookBase, secret: SECRET })
