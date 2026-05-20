@@ -25,6 +25,33 @@ LOG_PREFIX="$(date -u +%Y-%m-%dT%H:%M:%SZ) update.sh:"
 
 cd "$AGENT_ROOT" || { echo "$LOG_PREFIX cannot cd $AGENT_ROOT"; exit 1; }
 
+# ── Watchdog: self-heal a dead scanner ─────────────────────────────────────
+# Scanner runs every 5min on StartInterval. If scanner.log hasn't been
+# touched in >30min, something fucked up (launchd gave up after crash-loop,
+# FDA silently revoked, post-sleep-wake bug, etc.) — panic-restart fixes
+# ~all of these. 30min = 6 missed scan cycles, generous enough to ignore
+# brief sleep/wake gaps but tight enough to recover within ~10min of any
+# real stall (next updater tick after the threshold is breached).
+#
+# This runs BEFORE the git-pull logic so even a no-op update (no new
+# commits) still exercises the watchdog. Charlie should never need to
+# remote-recover the agent again.
+SCANNER_LOG="$AGENT_ROOT/scanner.log"
+WATCHDOG_THRESHOLD_SEC=1800
+
+if [ -f "$SCANNER_LOG" ]; then
+  log_mtime=$(stat -f %m "$SCANNER_LOG" 2>/dev/null || echo 0)
+  now=$(date +%s)
+  age=$((now - log_mtime))
+
+  if [ "$age" -gt "$WATCHDOG_THRESHOLD_SEC" ]; then
+    echo "$LOG_PREFIX WATCHDOG scanner.log is ${age}s old (>${WATCHDOG_THRESHOLD_SEC}s) — running panic-restart.sh"
+    bash "$AGENT_ROOT/panic-restart.sh" 2>&1 | sed "s|^|$LOG_PREFIX panic: |"
+    echo "$LOG_PREFIX WATCHDOG done — skipping git update this run, will resume next cycle"
+    exit 0
+  fi
+fi
+
 # Capture the current HEAD before fetch so we can detect a no-op.
 OLD_HEAD=$(git rev-parse HEAD 2>/dev/null || echo unknown)
 
