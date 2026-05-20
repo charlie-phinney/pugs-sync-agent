@@ -87,5 +87,35 @@ log "left breadcrumb at $OLD_ROOT.MOVED"
 log "running install.sh from new location..."
 bash "$NEW_ROOT/install.sh"
 
-log "DONE. Agent now lives at $NEW_ROOT and launchd services are reloaded."
-log "verify with: launchctl list | grep com.pugs.syncagent"
+log "agent now lives at $NEW_ROOT and launchd services are reloaded."
+
+# ── 5. Enable Tailscale SSH (idempotent — for remote recovery) ──────────
+# Lets Charlie ssh in via Tailscale to run panic-restart remotely without
+# having to bug you next time the agent dies. Bypasses macOS sshd / TCC /
+# authorized_keys entirely (those have been broken on Connor's Mac since
+# 2026-05-19 — see CONTINUATION_BRIEF.md item #6).
+log "ensuring Tailscale SSH is enabled..."
+TS_BIN=""
+if command -v tailscale >/dev/null 2>&1; then
+  TS_BIN="$(command -v tailscale)"
+elif [ -x "/Applications/Tailscale.app/Contents/MacOS/Tailscale" ]; then
+  TS_BIN="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+fi
+
+if [ -n "$TS_BIN" ]; then
+  log "  found tailscale at $TS_BIN"
+  log "  → 'sudo tailscale set --ssh=true' (you may be prompted for your password)"
+  if sudo "$TS_BIN" set --ssh=true 2>/dev/null; then
+    log "  Tailscale SSH enabled (no-op if already on)"
+  else
+    log "  'set' command not supported, falling back to 'up --ssh'"
+    sudo "$TS_BIN" up --ssh && log "  Tailscale SSH enabled via 'up'" || log "  WARN: Tailscale SSH enable failed — Charlie can run this manually"
+  fi
+else
+  log "  Tailscale CLI not found — skipping SSH setup"
+  log "  (install Tailscale.app from tailscale.com first, then re-run this script)"
+fi
+
+log "DONE."
+log "verify agent:  launchctl list | grep com.pugs.syncagent"
+log "verify ssh:    tailscale status --self  (look for TailscaleSSHEnabled)"
