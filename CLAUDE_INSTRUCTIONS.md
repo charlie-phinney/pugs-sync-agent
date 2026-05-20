@@ -18,23 +18,19 @@ The `.env` file inside the zip is **already filled in** with the correct `PUGS_S
 
 ## Step-by-step
 
-### Step 1 — extract the zip
+### Step 1 — clone the repo
 
-The zip Connor just uploaded should be in your `uploads` directory. Find it (the file is named `pugs-sync-agent.zip`) and extract it into Connor's Documents folder.
+Clone into the user's HOME directory (NOT `~/Documents/` — that's TCC-protected from launchd and silently breaks the auto-updater).
 
 ```bash
-# Replace UPLOAD_PATH with the actual path Cowork shows for the uploaded zip
-UPLOAD_PATH="$(find /sessions/*/mnt/uploads -name 'pugs-sync-agent*.zip' 2>/dev/null | head -1)"
-DEST=~/Documents
-mkdir -p "$DEST"
-cd "$DEST"
-unzip -o "$UPLOAD_PATH"
-ls -la "$DEST/pugs-sync-agent"
+cd ~
+git clone https://github.com/charlie-phinney/pugs-sync-agent.git
+cd pugs-sync-agent
 ```
 
-If the agent folder already exists from a prior attempt, that's fine — `unzip -o` overwrites.
+If the folder already exists from a prior install attempt, either remove it first (`rm -rf ~/pugs-sync-agent`) or use the existing one (`cd ~/pugs-sync-agent && git pull --ff-only`).
 
-If the user's filesystem isn't directly mountable in your environment, fall back to copying files via `Read` + `Write` if needed. Verify the install destination is `~/Documents/pugs-sync-agent` (so paths in subsequent steps line up).
+The `.env` file is gitignored. After clone, copy from the example (`cp .env.example .env`) and fill in `PUGS_SYNC_SECRET` — Charlie shares it out-of-band.
 
 ### Step 2 — verify Node.js is installed
 
@@ -62,7 +58,7 @@ Homebrew sometimes prints "Next steps:" with PATH instructions. Read what it say
 ### Step 3 — run the installer
 
 ```bash
-cd ~/Documents/pugs-sync-agent
+cd ~/pugs-sync-agent
 bash install.sh
 ```
 
@@ -107,7 +103,7 @@ launchctl unload ~/Library/LaunchAgents/com.pugs.syncagent.scanner.plist
 launchctl load   ~/Library/LaunchAgents/com.pugs.syncagent.scanner.plist
 
 # Then run a one-off test scan to verify
-cd ~/Documents/pugs-sync-agent
+cd ~/pugs-sync-agent
 node src/scan.js
 ```
 
@@ -128,7 +124,7 @@ Advanced state to ROWID 12392
 
 Once the scan posts successfully, tell Connor:
 
-> "Done! Your iMessages now flow into Pugs Sales automatically every 5 minutes. It runs in the background — you can close Terminal and the rest of this session. Nothing else for you to do. If you ever want to check on it, logs are at `~/Documents/pugs-sync-agent/scanner.log`."
+> "Done! Your iMessages now flow into Pugs Sales automatically every 5 minutes. It runs in the background — you can close Terminal and the rest of this session. Nothing else for you to do. If you ever want to check on it, logs are at `~/pugs-sync-agent/scanner.log`."
 
 ---
 
@@ -142,8 +138,8 @@ Once the scan posts successfully, tell Connor:
 
 ## Quick reference
 
-- Agent location: `~/Documents/pugs-sync-agent/`
-- Logs: `~/Documents/pugs-sync-agent/scanner.log` and `sender.log`
+- Agent location: `~/pugs-sync-agent/`
+- Logs: `~/pugs-sync-agent/scanner.log` and `sender.log`
 - Cloud dashboard: https://pugs-sales.vercel.app
-- Uninstall: `bash ~/Documents/pugs-sync-agent/uninstall.sh`
+- Uninstall: `bash ~/pugs-sync-agent/uninstall.sh`
 - Charlie's contact: contact@pugs.media
