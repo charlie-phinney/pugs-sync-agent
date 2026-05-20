@@ -47,6 +47,27 @@ if [ -f "$SCANNER_LOG" ]; then
   if [ "$age" -gt "$WATCHDOG_THRESHOLD_SEC" ]; then
     echo "$LOG_PREFIX WATCHDOG scanner.log is ${age}s old (>${WATCHDOG_THRESHOLD_SEC}s) — running panic-restart.sh"
     bash "$AGENT_ROOT/panic-restart.sh" 2>&1 | sed "s|^|$LOG_PREFIX panic: |"
+
+    # Beacon to pugs-sales so Charlie sees the self-heal fire in Vercel logs.
+    # Best-effort (no -f, no retry, 5s timeout) — recovery already succeeded
+    # locally; the POST is purely for observability. Repeated fires = genuine
+    # broken state that self-heal isn't curing → Charlie should investigate.
+    if [ -f "$AGENT_ROOT/.env" ]; then
+      # shellcheck disable=SC1091
+      . "$AGENT_ROOT/.env"
+      if [ -n "${PUGS_SYNC_SECRET:-}" ] && [ -n "${PUGS_SYNC_WEBHOOK_URL:-}" ]; then
+        # Derive base URL from PUGS_SYNC_WEBHOOK_URL (strip /api/import/imessage)
+        BASE_URL="${PUGS_SYNC_WEBHOOK_URL%/api/import/imessage}"
+        curl -sS -m 5 -X POST "$BASE_URL/api/sync/watchdog-fired" \
+          -H "x-pugs-sync-secret: $PUGS_SYNC_SECRET" \
+          -H "content-type: application/json" \
+          -d "{\"reason\":\"scanner.log stale\",\"age_seconds\":$age}" \
+          >/dev/null 2>&1 \
+          && echo "$LOG_PREFIX WATCHDOG beacon sent to pugs-sales" \
+          || echo "$LOG_PREFIX WATCHDOG beacon failed (non-fatal)"
+      fi
+    fi
+
     echo "$LOG_PREFIX WATCHDOG done — skipping git update this run, will resume next cycle"
     exit 0
   fi
