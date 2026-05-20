@@ -108,8 +108,16 @@ if [ -n "$TS_BIN" ]; then
   if sudo "$TS_BIN" set --ssh=true 2>/dev/null; then
     log "  Tailscale SSH enabled (no-op if already on)"
   else
-    log "  'set' command not supported, falling back to 'up --ssh'"
-    sudo "$TS_BIN" up --ssh && log "  Tailscale SSH enabled via 'up'" || log "  WARN: Tailscale SSH enable failed — Charlie can run this manually"
+    log "  'set' command not supported, falling back to 'up --ssh --accept-routes'"
+    # Older Tailscale 'up' requires re-stating all non-default flags.
+    # --accept-routes is the common one on Mac clients; include it preemptively.
+    if sudo "$TS_BIN" up --ssh --accept-routes 2>/dev/null; then
+      log "  Tailscale SSH enabled via 'up --ssh --accept-routes'"
+    else
+      log "  WARN: Tailscale SSH enable failed. Run manually:"
+      log "    sudo tailscale up --ssh --accept-routes"
+      log "  (if that errors, add any other flags it complains about and retry)"
+    fi
   fi
 else
   log "  Tailscale CLI not found — skipping SSH setup"
