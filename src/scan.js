@@ -136,7 +136,18 @@ async function main() {
     `).all(cutoffRowid, BATCH_SIZE)
 
     if (!rows.length) {
-      console.log('No new messages')
+      // Post empty payload so the server records a heartbeat — otherwise
+      // a silent scanner is indistinguishable from a crashed scanner.
+      console.log('No new messages — sending heartbeat')
+      try {
+        await fetch(WEBHOOK_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-pugs-sync-secret': SECRET },
+          body: JSON.stringify({ messages: [] }),
+        })
+      } catch (e) {
+        console.error(`Heartbeat failed: ${e.message}`)
+      }
       db.close()
       fs.unlinkSync(snapshotPath)
       return
