@@ -44,8 +44,30 @@ if [ -f "$SCANNER_LOG" ]; then
   now=$(date +%s)
   age=$((now - log_mtime))
 
+  # Two failure modes to catch:
+  #   (1) scanner.log mtime stale     → launchd gave up scheduling scanner
+  #   (2) scanner.log is fresh BUT no "Webhook OK" line in last 30min
+  #       → scanner is crash-looping (e.g. FDA revoked silently — every
+  #       launch errors before POSTing, but the log keeps being written).
+  watchdog_fire=0
+  watchdog_reason=""
+
   if [ "$age" -gt "$WATCHDOG_THRESHOLD_SEC" ]; then
-    echo "$LOG_PREFIX WATCHDOG scanner.log is ${age}s old (>${WATCHDOG_THRESHOLD_SEC}s) — running panic-restart.sh"
+    watchdog_fire=1
+    watchdog_reason="scanner.log stale (${age}s old)"
+  else
+    # Check for a recent successful POST. The grep is greedy on purpose:
+    # any of "Webhook OK", "sending heartbeat", or "Posting N messages"
+    # within the last 200 lines is a sign of life. tail-then-grep
+    # cheap even when the log is huge.
+    if ! tail -200 "$SCANNER_LOG" 2>/dev/null | grep -qE "Webhook OK|sending heartbeat|Posting [0-9]+ messages"; then
+      watchdog_fire=1
+      watchdog_reason="scanner.log fresh but no recent success line — crash-loop suspected"
+    fi
+  fi
+
+  if [ "$watchdog_fire" -eq 1 ]; then
+    echo "$LOG_PREFIX WATCHDOG $watchdog_reason — running panic-restart.sh"
     bash "$AGENT_ROOT/panic-restart.sh" 2>&1 | sed "s|^|$LOG_PREFIX panic: |"
 
     # Beacon to pugs-sales so Charlie sees the self-heal fire in Vercel logs.
