@@ -259,7 +259,11 @@ async function main() {
     let droppedWrongAccount = 0
     const filteredPayload = payload.filter(p => {
       if (p.is_from_me) {
-        if (EXPECTED_APPLE_ID && p.account && p.account !== EXPECTED_APPLE_ID) {
+        // chat.db's message.account is typically a prefixed string like
+        // "iMessage;-;cjfpug@icloud.com" (or "E:cjfpug@icloud.com" on older
+        // macOS). Using includes() means EXPECTED_APPLE_ID can be set to
+        // the bare email/phone (e.g. "cjfpug@icloud.com") and still match.
+        if (EXPECTED_APPLE_ID && p.account && !p.account.includes(EXPECTED_APPLE_ID)) {
           droppedWrongAccount++
           return false
         }
