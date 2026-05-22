@@ -110,6 +110,13 @@ async function main() {
     //
     // We use a CTE-style subquery so the participant-count check happens
     // once per chat rather than once per row.
+    //
+    // chat-context (added 2026-05-21, migration 049): we also pull the
+    // chat row's GUID, display_name, and the concatenated participant
+    // handles so pugs-sales can give every message a stable thread
+    // identity. For 1:1 we hard-code chat_kind='direct' in JS — when we
+    // eventually widen to group chats, the CTE goes away and chat_kind
+    // is derived from participant count.
     const rows = db.prepare(`
       WITH one_to_one_chats AS (
         SELECT chat_id
@@ -118,17 +125,26 @@ async function main() {
         HAVING COUNT(*) = 1
       )
       SELECT
-        m.ROWID       AS rowid,
-        m.guid        AS guid,
-        m.text        AS text,
-        m.date        AS date,
-        m.is_from_me  AS is_from_me,
-        m.service     AS service,
-        h.id          AS handle
+        m.ROWID         AS rowid,
+        m.guid          AS guid,
+        m.text          AS text,
+        m.date          AS date,
+        m.is_from_me    AS is_from_me,
+        m.service       AS service,
+        h.id            AS handle,
+        c.guid          AS chat_guid,
+        c.display_name  AS chat_display_name,
+        (
+          SELECT group_concat(h2.id, char(31))
+          FROM chat_handle_join chj2
+          JOIN handle h2 ON h2.ROWID = chj2.handle_id
+          WHERE chj2.chat_id = cmj.chat_id
+        )               AS chat_participants_concat
       FROM message m
       LEFT JOIN handle h ON m.handle_id = h.ROWID
       JOIN chat_message_join cmj ON cmj.message_id = m.ROWID
       JOIN one_to_one_chats o2o ON o2o.chat_id = cmj.chat_id
+      JOIN chat c ON c.ROWID = cmj.chat_id
       WHERE m.ROWID > ?
         AND m.text IS NOT NULL
         AND m.text != ''
@@ -163,6 +179,16 @@ async function main() {
         is_from_me: r.is_from_me ? 1 : 0,
         handle: r.handle,
         service: r.service === 'SMS' ? 'SMS' : 'iMessage',
+        chat_id: r.chat_guid || null,
+        // Filter is 1:1-only, so kind is always 'direct'. When we widen,
+        // derive from participant count instead.
+        chat_kind: 'direct',
+        chat_name: r.chat_display_name || null,
+        // group_concat uses ASCII Unit Separator (0x1F) — won't collide
+        // with phone/email content. Returns null when chat has no handles.
+        chat_participants: r.chat_participants_concat
+          ? r.chat_participants_concat.split('').filter(Boolean)
+          : null,
       }))
       .filter(r => r.sent_at && r.handle)
 
