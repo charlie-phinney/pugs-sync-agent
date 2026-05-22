@@ -100,8 +100,9 @@ function extractFromDb(dbPath) {
  * @param {object} opts
  * @param {string} opts.webhookBase - https://pugs-sales.vercel.app (no path)
  * @param {string} opts.secret      - PUGS_SYNC_SECRET
+ * @param {string} [opts.scannerId] - PUGS_SCANNER_ID (sent as x-pugs-scanner-id)
  */
-async function syncContacts({ webhookBase, secret }) {
+async function syncContacts({ webhookBase, secret, scannerId = '' }) {
   const books = findAddressBooks()
   if (!books.length) {
     // Still POST an empty payload so the server-side heartbeat records
@@ -110,7 +111,11 @@ async function syncContacts({ webhookBase, secret }) {
     try {
       const resp = await fetch(`${webhookBase}/api/sync/contacts`, {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json', 'x-pugs-sync-secret': secret },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-pugs-sync-secret': secret,
+          'x-pugs-scanner-id': scannerId,
+        },
         body: JSON.stringify({ phones: [], emails: [], agent_note: 'no_address_books_found' }),
       })
       const text = await resp.text()
@@ -151,6 +156,7 @@ async function syncContacts({ webhookBase, secret }) {
       headers: {
         'Content-Type':       'application/json',
         'x-pugs-sync-secret': secret,
+        'x-pugs-scanner-id':  scannerId,
       },
       body: JSON.stringify(payload),
     })

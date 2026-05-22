@@ -82,6 +82,7 @@ if [ -f "$SCANNER_LOG" ]; then
         BASE_URL="${PUGS_SYNC_WEBHOOK_URL%/api/import/imessage}"
         curl -sS -m 5 -X POST "$BASE_URL/api/sync/watchdog-fired" \
           -H "x-pugs-sync-secret: $PUGS_SYNC_SECRET" \
+          -H "x-pugs-scanner-id: ${PUGS_SCANNER_ID:-}" \
           -H "content-type: application/json" \
           -d "{\"reason\":\"scanner.log stale\",\"age_seconds\":$age}" \
           >/dev/null 2>&1 \
