@@ -25,6 +25,13 @@ const SECRET      = process.env.PUGS_SYNC_SECRET
 // once that allowlist is active. Empty string = unidentified scanner —
 // pugs-sales' scanner-guard will 403 if the allowlist is on.
 const SCANNER_ID  = process.env.PUGS_SCANNER_ID || ''
+// EXPECTED_APPLE_ID: if set, the scanner only treats outbound messages as
+// "Connor's" when chat.db's message.account matches this value. Otherwise
+// outbound from any account (which can happen if multiple iClouds are
+// signed into Messages.app) gets dropped, preventing the prospect
+// auto-extend backdoor where a different iCloud's outbound silently
+// promotes recipients into the allowlist. Unset = no filter (back-compat).
+const EXPECTED_APPLE_ID = process.env.EXPECTED_APPLE_ID || ''
 const CHAT_DB     = process.env.CHAT_DB_PATH || path.join(os.homedir(), 'Library', 'Messages', 'chat.db')
 const STATE_PATH  = path.join(__dirname, '..', 'state.json')
 const BATCH_SIZE  = 200
@@ -174,6 +181,7 @@ async function main() {
         m.date          AS date,
         m.is_from_me    AS is_from_me,
         m.service       AS service,
+        m.account       AS account,
         h.id            AS handle,
         c.guid          AS chat_guid,
         c.display_name  AS chat_display_name,
@@ -225,6 +233,7 @@ async function main() {
         sent_at: appleDateToISO(r.date),
         is_from_me: r.is_from_me ? 1 : 0,
         handle: r.handle,
+        account: r.account || null,
         service: r.service === 'SMS' ? 'SMS' : 'iMessage',
         chat_id: r.chat_guid || null,
         // Filter is 1:1-only, so kind is always 'direct'. When we widen,
@@ -240,12 +249,22 @@ async function main() {
       .filter(r => r.sent_at && r.handle)
 
     // Prospect intersect — drop inbound rows whose sender handle isn't in
-    // the allowlist. Outbound (is_from_me=1) always passes — that's the
-    // auto-extend signal: "Connor texted X first" → X becomes a prospect
-    // server-side on the next /api/sync/prospect-handles refresh.
+    // the allowlist. Outbound (is_from_me=1) passes if (a) the row's
+    // account matches EXPECTED_APPLE_ID (or EXPECTED_APPLE_ID is unset),
+    // because outbound from the configured iCloud is Connor's deliberate
+    // first-touch that auto-extends the allowlist server-side. Outbound
+    // from a DIFFERENT account (= a different iCloud signed into Messages
+    // on this Mac) gets dropped — that's the backdoor we're closing.
     const beforeProspect = payload.length
+    let droppedWrongAccount = 0
     const filteredPayload = payload.filter(p => {
-      if (p.is_from_me) return true
+      if (p.is_from_me) {
+        if (EXPECTED_APPLE_ID && p.account && p.account !== EXPECTED_APPLE_ID) {
+          droppedWrongAccount++
+          return false
+        }
+        return true
+      }
       if (!p.handle) return false
       if (p.handle.includes('@')) {
         return prospects.emails.has(p.handle.trim().toLowerCase())
@@ -253,9 +272,9 @@ async function main() {
       const digits = p.handle.replace(/\D/g, '').slice(-10)
       return digits.length === 10 && prospects.phones.has(digits)
     })
-    const droppedNotProspect = beforeProspect - filteredPayload.length
-    if (droppedNotProspect > 0) {
-      console.log(`Dropped ${droppedNotProspect}/${beforeProspect} rows: sender not in prospect allowlist`)
+    const droppedNotProspect = beforeProspect - filteredPayload.length - droppedWrongAccount
+    if (droppedNotProspect > 0 || droppedWrongAccount > 0) {
+      console.log(`Dropped ${droppedNotProspect + droppedWrongAccount}/${beforeProspect} rows (${droppedNotProspect} not-prospect, ${droppedWrongAccount} wrong-apple-id)`)
     }
 
     console.log(`Posting ${filteredPayload.length} messages (ROWIDs ${rows[0].rowid}..${rows[rows.length - 1].rowid})`)
