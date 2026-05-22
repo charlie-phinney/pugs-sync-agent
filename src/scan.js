@@ -75,11 +75,49 @@ function snapshotDb() {
 // ───────────────────────────────────────────────────────────────────────
 // Main
 
+// Fetch the prospect-handle allowlist from pugs-sales. Returns
+// { phonesSet, emailsSet, total }. Throws on network error so caller can
+// decide whether to bail (we bail rather than ship un-filtered messages —
+// a failed allowlist fetch is exactly the kind of edge case that should
+// halt ingestion, not bypass it).
+async function fetchProspectHandles() {
+  const base = new URL(WEBHOOK_URL).origin
+  const res = await fetch(`${base}/api/sync/prospect-handles`, {
+    headers: {
+      'x-pugs-sync-secret': SECRET,
+      'x-pugs-scanner-id':  SCANNER_ID,
+    },
+  })
+  if (!res.ok) {
+    throw new Error(`prospect-handles ${res.status}: ${(await res.text()).slice(0, 200)}`)
+  }
+  const j = await res.json()
+  return {
+    phones: new Set(j.phones || []),
+    emails: new Set((j.emails || []).map(e => e.toLowerCase())),
+    total:  (j.count_phones || 0) + (j.count_emails || 0),
+  }
+}
+
 async function main() {
   if (!fs.existsSync(CHAT_DB)) {
     console.error(`chat.db not found at ${CHAT_DB}`)
     console.error('Have you granted Full Disk Access to the Node binary?')
     process.exit(3)
+  }
+
+  // STRUCTURAL DEFENSE (added 2026-05-22): fetch the sales-prospect handle
+  // allowlist before scanning. Only messages whose sender handle is in this
+  // set (OR outbound messages from this Mac) get shipped to pugs-sales.
+  // Stops Wickie / Nancy / Mom / friends / newsletter-collision noise dead
+  // at the scanner — server has the same check as belt+suspenders.
+  let prospects
+  try {
+    prospects = await fetchProspectHandles()
+    console.log(`Prospect allowlist: ${prospects.phones.size} phones + ${prospects.emails.size} emails (${prospects.total} total)`)
+  } catch (e) {
+    console.error(`Failed to fetch prospect allowlist — halting scan to avoid un-filtered ingest. ${e.message}`)
+    process.exit(5)
   }
 
   const state = loadState()
@@ -201,7 +239,26 @@ async function main() {
       }))
       .filter(r => r.sent_at && r.handle)
 
-    console.log(`Posting ${payload.length} messages (ROWIDs ${rows[0].rowid}..${rows[rows.length - 1].rowid})`)
+    // Prospect intersect — drop inbound rows whose sender handle isn't in
+    // the allowlist. Outbound (is_from_me=1) always passes — that's the
+    // auto-extend signal: "Connor texted X first" → X becomes a prospect
+    // server-side on the next /api/sync/prospect-handles refresh.
+    const beforeProspect = payload.length
+    const filteredPayload = payload.filter(p => {
+      if (p.is_from_me) return true
+      if (!p.handle) return false
+      if (p.handle.includes('@')) {
+        return prospects.emails.has(p.handle.trim().toLowerCase())
+      }
+      const digits = p.handle.replace(/\D/g, '').slice(-10)
+      return digits.length === 10 && prospects.phones.has(digits)
+    })
+    const droppedNotProspect = beforeProspect - filteredPayload.length
+    if (droppedNotProspect > 0) {
+      console.log(`Dropped ${droppedNotProspect}/${beforeProspect} rows: sender not in prospect allowlist`)
+    }
+
+    console.log(`Posting ${filteredPayload.length} messages (ROWIDs ${rows[0].rowid}..${rows[rows.length - 1].rowid})`)
 
     const resp = await fetch(WEBHOOK_URL, {
       method: 'POST',
@@ -210,7 +267,7 @@ async function main() {
         'x-pugs-sync-secret': SECRET,
         'x-pugs-scanner-id': SCANNER_ID,
       },
-      body: JSON.stringify({ messages: payload }),
+      body: JSON.stringify({ messages: filteredPayload }),
     })
     const text = await resp.text()
     if (!resp.ok) {
