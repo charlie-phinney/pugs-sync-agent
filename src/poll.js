@@ -26,6 +26,9 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
 
 const WEBHOOK_URL      = process.env.PUGS_SYNC_WEBHOOK_URL
 const SECRET           = process.env.PUGS_SYNC_SECRET
+// Identifies this machine to pugs-sales' ALLOWED_SCANNER_IDS allowlist.
+// Empty string = unidentified; harmless if allowlist isn't active server-side.
+const SCANNER_ID       = process.env.PUGS_SCANNER_ID || ''
 const SENDER_PORT      = parseInt(process.env.SENDER_PORT      || '7890', 10)
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS || '5000', 10)
 const MAX_ATTEMPTS     = parseInt(process.env.MAX_ATTEMPTS     || '5',    10)
@@ -45,7 +48,7 @@ function log(...args) {
 
 async function fetchPendingBatch() {
   const res = await fetch(`${API_BASE}/api/sync/outbound-queue?limit=10`, {
-    headers: { 'x-pugs-sync-secret': SECRET },
+    headers: { 'x-pugs-sync-secret': SECRET, 'x-pugs-scanner-id': SCANNER_ID },
   })
   if (!res.ok) {
     throw new Error(`queue GET ${res.status}: ${(await res.text()).slice(0, 300)}`)
@@ -57,7 +60,11 @@ async function fetchPendingBatch() {
 async function reportOutcome(id, payload) {
   const res = await fetch(`${API_BASE}/api/sync/outbound-queue/${id}`, {
     method:  'POST',
-    headers: { 'Content-Type': 'application/json', 'x-pugs-sync-secret': SECRET },
+    headers: {
+      'Content-Type':       'application/json',
+      'x-pugs-sync-secret': SECRET,
+      'x-pugs-scanner-id':  SCANNER_ID,
+    },
     body:    JSON.stringify(payload),
   })
   if (!res.ok) {

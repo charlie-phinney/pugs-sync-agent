@@ -20,6 +20,11 @@ require('dotenv').config({ path: path.join(__dirname, '..', '.env') })
 
 const WEBHOOK_URL = process.env.PUGS_SYNC_WEBHOOK_URL
 const SECRET      = process.env.PUGS_SYNC_SECRET
+// PUGS_SCANNER_ID identifies which physical machine is sending. Must match
+// one of the values in pugs-sales' ALLOWED_SCANNER_IDS env (comma-separated)
+// once that allowlist is active. Empty string = unidentified scanner —
+// pugs-sales' scanner-guard will 403 if the allowlist is on.
+const SCANNER_ID  = process.env.PUGS_SCANNER_ID || ''
 const CHAT_DB     = process.env.CHAT_DB_PATH || path.join(os.homedir(), 'Library', 'Messages', 'chat.db')
 const STATE_PATH  = path.join(__dirname, '..', 'state.json')
 const BATCH_SIZE  = 200
@@ -159,7 +164,11 @@ async function main() {
       try {
         await fetch(WEBHOOK_URL, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-pugs-sync-secret': SECRET },
+          headers: {
+            'Content-Type': 'application/json',
+            'x-pugs-sync-secret': SECRET,
+            'x-pugs-scanner-id': SCANNER_ID,
+          },
           body: JSON.stringify({ messages: [] }),
         })
       } catch (e) {
@@ -199,6 +208,7 @@ async function main() {
       headers: {
         'Content-Type': 'application/json',
         'x-pugs-sync-secret': SECRET,
+        'x-pugs-scanner-id': SCANNER_ID,
       },
       body: JSON.stringify({ messages: payload }),
     })
@@ -245,7 +255,7 @@ async function main() {
     console.log(`Contacts sync trigger: ${trigger}`)
     const webhookBase = WEBHOOK_URL.replace(/\/api\/.*$/, '')
     try {
-      const res = await syncContacts({ webhookBase, secret: SECRET })
+      const res = await syncContacts({ webhookBase, secret: SECRET, scannerId: SCANNER_ID })
       console.log('Contacts sync:', JSON.stringify(res))
       // Only advance the cadence on actual success — keep retrying if the
       // post failed or the AddressBook wasn't readable.
